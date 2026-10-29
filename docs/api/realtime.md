@@ -15,7 +15,7 @@ local Push-to-Talk monitoring, binary UDP and a versioned custom payload.
 
 The client no longer loads executable WebAssembly mods after the native transition
 in #3350. The interfaces below document the legacy SDK/runtime tooling; the
-`horizon-client/mods` feature has been removed. Content-only `.hmod` files remain
+`horizon-client/mods` flag is a compatibility no-op and does not enable WASM execution. Content-only `.hmod` files remain
 supported. New mods use [native hook API 3](../native-voice.md), including native
 microphone, playback, UDP/DNS, payloads and per-mod session permission controls.
 

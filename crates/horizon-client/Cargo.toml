@@ -90,6 +90,9 @@ default = ["audio", "controllers"]
 audio = ["horizon-client-render/audio", "horizon-mods/audio"]
 # Controllers: gilrs, and the DualSense's own output. Without it only `horizon-ctl pad`'s virtual pad.
 controllers = ["dep:gilrs", "dep:horizon-dualsense", "horizon-client-input/controllers"]
+# Compatibility for existing CI/release commands. Native mods are always available;
+# this flag enables no dependencies and does not restore WebAssembly execution.
+mods = []
 # Records the call sites of mob random draws (`mob_ai_probe` traces).
 rng-trace = ["horizon-core/rng-trace"]
 

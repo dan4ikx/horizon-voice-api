@@ -72,7 +72,8 @@ warning and source review remain necessary. See the
 
 The client follows [#3350](https://github.com/horizon-rust/horizon/pull/3350):
 executable WASM `.hmod` files are retained but no longer loaded, while content-only
-packages keep working. There is no `horizon-client/mods` feature. Voice services,
+packages keep working. The `horizon-client/mods` flag is retained as a no-op for existing build and CI
+commands; it enables no runtime or additional dependencies. Voice services,
 custom payload routing and permission controls use the native game lifecycle.
 The old WASM SDK/runtime crates remain legacy tooling until their separate removal.
 

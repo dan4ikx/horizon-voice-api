@@ -31,7 +31,7 @@ pin, else on the installed version's commit (the game the player plays), after c
 `NATIVE_HOOKS_API` (read from GitHub) is at least the mod's; when it isn't and nothing pins, it builds on the commit the
 mod was tested on. In its own copy of the mod it sets `horizon_revision` to the commit it builds on. Horizon's
 official mods (Zoom, FPS counter, Keystrokes, Minimap, Recipes) are made this way, so any of them build together
-with no re-release for each Nightly. The `mods` feature (WebAssembly mods) is passed to the build only when the source has it.
+with no re-release for each Nightly. The launcher passes the `mods` feature only when the source has it: older revisions use it for WebAssembly, while the current native client accepts it as a compatibility no-op.
 
 API 2 adds the item panel beside container screens and its recipe pages (`native_panel_items`,
 `native_panel_recipes`, and the hook `native_panel_event` for the player's clicks, searches and keys over items), and
