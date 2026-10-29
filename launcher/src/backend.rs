@@ -1306,6 +1306,69 @@ pub fn download_version_for_owner(
     Ok(dir)
 }
 
+/// The command that starts a Java instance's Minecraft, for an account that owns the game: its
+/// version downloaded from Mojang the first time (then it starts offline too), the Java it needs
+/// (the instance's own, else one found here, else Mojang's, downloaded), and the game in the
+/// instance's folder. The caller wraps it (`launch::wrap`) and never logs it: it holds the token.
+pub fn java_game(
+    instance: &crate::instances::Instance,
+    log: &dyn Fn(String),
+) -> Result<Command, String> {
+    let game = instance.java.as_ref().ok_or_else(|| {
+        format!(
+            "{} plays Horizon, not Minecraft: Java Edition",
+            instance.name
+        )
+    })?;
+    let player = account::java_player()?;
+    let minecraft = data_dir().join("minecraft");
+    let id = mojang::relative(&game.minecraft)?;
+    let versions = minecraft.join("versions").join(&id);
+    let downloaded = versions.join(".downloaded");
+    if !downloaded.is_file() {
+        let listed = crate::minecraft_versions::load()?;
+        let version = listed.find(&game.minecraft)?;
+        download_version_for_owner(&version.id, &version.sha1, log)?;
+        fs::write(&downloaded, "").map_err(|e| format!("{}: {e}", downloaded.display()))?;
+    }
+    let file = versions.join(format!("{}.json", game.minecraft));
+    let version: serde_json::Value = fs::read_to_string(&file)
+        .map_err(|e| e.to_string())
+        .and_then(|text| serde_json::from_str(&text).map_err(|e| e.to_string()))
+        .map_err(|e| format!("{}: {e}", file.display()))?;
+    let need = crate::java::Need::of(&version);
+    let found = crate::java::pick(
+        &need,
+        game.home.as_deref(),
+        &crate::java::mojang_runtimes(&crate::java::runtimes_dir()),
+        &crate::java::installed(),
+    )?;
+    let runtime = match found {
+        Some(runtime) => runtime,
+        None => {
+            log(format!("Downloading Java {} from Mojang", need.major));
+            crate::java::install(&need, log)?
+        }
+    };
+    let jvm_args: Vec<String> = game.jvm_args.split_whitespace().map(String::from).collect();
+    fs::create_dir_all(&instance.home).map_err(|e| format!("{}: {e}", instance.home.display()))?;
+    crate::java_launch::command(
+        &version,
+        &crate::java_launch::Launch {
+            minecraft: &minecraft,
+            game_dir: &instance.home,
+            natives: &minecraft.join("natives").join(&id),
+            java: &runtime.java(),
+            memory_mb: game
+                .memory_mb
+                .unwrap_or(crate::instances::DEFAULT_MEMORY_MB),
+            jvm_args: &jvm_args,
+            player: &player,
+            os: crate::java_launch::os_name(),
+        },
+    )
+}
+
 /// What [`download_for_owner`] does with the owner gate's answer: Mojang's files only for its
 /// `owner`, an account the services said owns the game just now.
 fn download_for(
@@ -2676,6 +2739,9 @@ pub enum Msg {
     NativeProgress(String),
     /// The native-mods build ended: the version built, or why not.
     Native(Result<String, String>),
+    /// A Java instance's game is ready to start (`java_game`, wrapped): the instance's id and
+    /// game folder, and the command or why not.
+    JavaGame(String, PathBuf, Result<Command, String>),
 }
 
 /// A running process; its output arrives as `Msg::Line`, its end as `Msg::Exit`.
@@ -2865,10 +2931,14 @@ pub struct Settings {
     /// The window's language. Unset follows the system's (`i18n::Language::system`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<crate::i18n::Language>,
-    /// The player turned Native mods (experimental) on (`native_mods`): mixin mods compiled into
-    /// a game of their own. Off by default.
+    /// Native mods (experimental) are on (`native_mods`): mixin mods compiled into a game of
+    /// their own. Off until the player installs a native mod (`native_mods::turns_on`), or turns
+    /// them on in Settings.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub native_mods: bool,
+    /// The player has read what installing a native mod starts (`native_mods::needs_notice`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub native_mods_noticed: bool,
     /// Developer options (hidden: seven clicks on the sidebar's launcher version reveal them):
     /// offline names play without an account that owns the game, in the window only
     /// (`account::Accounts::play_as_with`, `account::launch_for_game`). Never a download: the game still
