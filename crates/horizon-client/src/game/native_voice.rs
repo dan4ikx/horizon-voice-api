@@ -55,7 +55,7 @@ impl Game<'_> {
             let id = self
                 .remote
                 .as_ref()
-                .map_or_else(|| self.player_uuid_string(), |r| uuid(r.profile));
+                .map_or_else(|| uuid(self.player_uuid()), |r| uuid(r.profile));
             players.retain(|p| p.id != id);
             players.push(horizon_mods::native::Player {
                 id,
@@ -101,7 +101,7 @@ impl Game<'_> {
         let local_player = self.player.as_ref().map(|_| {
             self.remote
                 .as_ref()
-                .map_or_else(|| self.player_uuid_string(), |r| uuid(r.profile))
+                .map_or_else(|| uuid(self.player_uuid()), |r| uuid(r.profile))
         });
         let mut players = self.native_remote_voice_ids();
         players.extend(
@@ -184,7 +184,7 @@ impl Game<'_> {
             if let Some(player) = message.player {
                 if self.remote.is_none()
                     && self.player.is_some()
-                    && self.player_uuid_string() == player
+                    && uuid(self.player_uuid()) == player
                 {
                     self.mods
                         .native_voice
@@ -206,7 +206,7 @@ impl Game<'_> {
             } else if self.remote.is_some() {
                 self.send(Serverbound::CustomPayload(payload));
             } else if self.player.is_some() {
-                let player = self.player_uuid_string();
+                let player = uuid(self.player_uuid());
                 self.mods
                     .native_voice
                     .deliver(Some(&player), &payload.channel, &payload.data);

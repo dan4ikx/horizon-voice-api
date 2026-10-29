@@ -534,7 +534,7 @@ mod run {
                     if self.options.execution_role.is_client()
                         && self.remote.is_none()
                         && self.player.is_some()
-                        && self.player_uuid_string() == player
+                        && uuid_string(self.player_uuid()) == player
                     {
                         self.mods.native_voice.deliver(None, &channel, &data);
                         self.mods.mods.custom_payload(None, &channel, &data);

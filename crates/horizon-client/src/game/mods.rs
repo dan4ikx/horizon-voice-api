@@ -484,7 +484,7 @@ impl Game<'_> {
             server_address: self.remote.as_ref().map(|r| r.session.address.clone()),
             local_player: self.player.as_ref().map(|_| {
                 self.remote.as_ref().map_or_else(
-                    || self.player_uuid_string(),
+                    || super::native_voice::uuid(self.player_uuid()),
                     |r| {
                         let h = format!("{:032x}", r.profile);
                         format!(
@@ -744,7 +744,7 @@ impl Game<'_> {
                             },
                         ));
                     } else if self.player.is_some() {
-                        let player = self.player_uuid_string();
+                        let player = super::native_voice::uuid(self.player_uuid());
                         self.mods
                             .native_voice
                             .deliver(Some(&player), &channel, &data);
