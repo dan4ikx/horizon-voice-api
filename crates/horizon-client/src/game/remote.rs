@@ -572,10 +572,7 @@ impl Game<'_> {
 
     /// Disconnect and return to the multiplayer screen (DisconnectedScreen).
     pub(super) fn leave_server(&mut self, reason: Option<String>) -> Result<()> {
-        #[cfg(feature = "mods")]
-        self.mods
-            .mods
-            .set_snapshot(horizon_mods::Snapshot::default());
+        self.native_voice.disconnect();
         if reason.is_none() && self.integrated.as_ref().is_some_and(|s| !s.stopped()) {
             return self.begin_closing_save(false);
         }
@@ -784,9 +781,6 @@ impl Game<'_> {
             self.ticks,
             self.screen == Screen::Chat,
         );
-        if self.mods.running() {
-            self.mods_chat(&text);
-        }
         if let Some(r) = self.remote.as_mut() {
             r.chat.push((text, Instant::now()));
             r.chat_received += 1;
@@ -1842,11 +1836,7 @@ impl Game<'_> {
     fn handle_packet(&mut self, packet: C) -> Result<()> {
         match packet {
             C::CustomPayload(p) => {
-                self.mods.native_voice.deliver(None, &p.channel, &p.data);
-                #[cfg(feature = "mods")]
-                self.mods.mods.custom_payload(None, &p.channel, &p.data);
-                #[cfg(not(feature = "mods"))]
-                let _ = p;
+                self.native_voice.deliver(None, &p.channel, &p.data);
             }
             // ClientCommonPacketListenerImpl.handlePing runs on the game
             // thread, after all preceding packets (especially teleports).
@@ -2908,7 +2898,6 @@ impl Game<'_> {
                 if let Some(r) = self.remote.as_mut() {
                     r.commands = Some(tree);
                 }
-                self.merge_remote_tree();
             }
             C::Cooldown(p) => {
                 // ClientPacketListener.handleItemCooldown: the server starts
@@ -3759,9 +3748,9 @@ impl Game<'_> {
         self.tick_remote_level()?;
         // Client mods tick on any server, single player's own included.
         self.sync_native_voice();
-        self.tick_mods();
         self.native_tick();
         self.flush_native_voice();
+        self.tell_native_now();
         // Minecraft.tick sends this even when the player cannot tick yet,
         // including while waiting for chunks. Keep it outside early returns.
         if self.remote.as_ref().is_some_and(|r| r.joined) {

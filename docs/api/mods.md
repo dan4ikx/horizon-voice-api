@@ -1,5 +1,10 @@
 # Mod API
 
+> The client now runs native code mods. Executable WASM `.hmod` packages no longer
+> load; content-only packages still work. This page describes the legacy WASM
+> tooling. See [native mods](../native-mods.md) and [native voice services](../native-voice.md) for current APIs.
+
+
 Mods are Rust crates compiled to sandboxed WebAssembly components. Client mods run in the player's game; server mods
 (experimental) run wherever a world is simulated: single player, a LAN host, the dedicated server. Design and the runtime: [mods.md](../mods.md).
 

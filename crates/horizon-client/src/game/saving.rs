@@ -29,6 +29,7 @@ const SNAPSHOT_BUDGET: Duration = Duration::from_millis(2);
 
 impl Game<'_> {
     pub(super) fn begin_closing_save(&mut self, quit: bool) -> Result<()> {
+        self.native_voice.disconnect();
         if let Some(save) = &mut self.pending_save {
             save.quit |= quit;
             return Ok(());

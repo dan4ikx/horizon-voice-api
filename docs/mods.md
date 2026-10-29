@@ -1,5 +1,10 @@
 # Horizon mods
 
+> The client now runs native code mods. Executable WASM `.hmod` packages no longer
+> load; content-only packages still work. This page describes the legacy WASM
+> tooling. See [native mods](native-mods.md) and [native voice services](native-voice.md) for current APIs.
+
+
 Horizon gets its own mod system, written in Rust and run in a sandbox, plus
 two ways to bring over what Java players use: native Horizon ports of popular
 mods and the data-driven parts of packs and mods. Fabric and NeoForge jars do

@@ -32,12 +32,11 @@ The registry holds at most 32 users. An invalid declaration is not registered.
 
 In a native frame, tick, key or command hook, call
 `game.native_voice("my_voice")?` to obtain `&mut horizon_mods::native::Voice`.
-The registry, connection snapshot and budgets are updated before tick/frame
-hooks. Workers communicate through bounded owned queues; mod code runs on the
-game thread. Pending payload output is routed after those hooks (other hooks'
-output is flushed by the next frame/tick). Types can also be imported from
-`horizon_mod_sdk::native` on native targets with the SDK's `native` feature.
-Mixin helpers already have access to the game's `horizon_mods` dependency.
+The native registry lives directly on `Game`, independently of the content mod
+list. The connection snapshot and budgets are updated before tick/frame hooks.
+Workers communicate through bounded owned queues; mod code runs on the game thread. Pending payload output is routed after those hooks (other hooks'
+output is flushed by the next frame/tick). The typed Rust API is
+`horizon_mods::native`; mixin helpers already have access to this game dependency.
 
 ## Consent and lifecycle
 
@@ -69,6 +68,22 @@ helpers, forge attribution or access the OS directly. The native-code trust
 warning and source review remain necessary. See the
 [permission design and remaining decisions](native-voice-permissions.md).
 
+## Migration and saved settings
+
+The client follows [#3350](https://github.com/horizon-rust/horizon/pull/3350):
+executable WASM `.hmod` files are retained but no longer loaded, while content-only
+packages keep working. There is no `horizon-client/mods` feature. Voice services,
+custom payload routing and permission controls use the native game lifecycle.
+The old WASM SDK/runtime crates remain legacy tooling until their separate removal.
+
+[#3352](https://github.com/horizon-rust/horizon/pull/3352) is already included:
+the launcher copies a mod's `.horizon-mod-data/<id>/` folder and `key.<id>.`
+settings to the native instance once, preserving existing destination settings.
+A port must keep its previous mod ID to inherit those settings. Continue using
+`native_setting`, `native_set_setting` and `native_mod_key` for preferences.
+Horizon service grants stay in memory; copying settings never grants microphone,
+DNS or UDP access. The diagnostic native example has its own `native_voice_lab` ID.
+
 ## Audio
 
 - `input_devices`, `start_capture(device, gain)`, `stop_capture`, `input_gain`,
@@ -92,7 +107,7 @@ worker errors surface through read/write calls.
 
 `resolve(host, port)` / `resolved()`, `connect_udp(numeric_address)`,
 `send_udp(handle, bytes)`, `receive_udp(handle)` and `close_udp(handle)` use the
-same bounded transport as WASM mods. There are four sockets per mod, 1,200-byte
+shared bounded transport backend. There are four sockets per mod, 1,200-byte
 datagrams, 256 sent/received datagrams per second, and 32 packets per receive
 call. DNS allows one pending lookup per mod and four globally, with a ten-second
 consumer timeout. It never runs synchronously on the game thread.
@@ -107,8 +122,8 @@ limited to 1,024 bytes per call and 4,096 per game hook budget.
 `register_channel`, `unregister_channel`, `send_payload(player, channel, bytes)`
 and `poll()` provide binary messages. Register an exact namespaced channel
 first; `minecraft:*` and `horizon:*` are reserved. Up to 32 channels per mod are
-allowed. The game announces the union of native and WASM subscriptions so one
-runtime cannot unregister another's channel.
+allowed. The game announces the union of active native subscriptions so one mod cannot
+unregister another mod's channel.
 
 Clients pass `None` for the target; server mods pass an online player's UUID
 from `voice.session().players`. In-frame hosts can also target their local

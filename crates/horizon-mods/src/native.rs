@@ -426,6 +426,15 @@ pub struct Services {
     announced: BTreeSet<String>,
 }
 impl Services {
+    /// Revoke session grants and drop capture, playback, sockets and pending DNS immediately.
+    pub fn disconnect(&mut self) {
+        // Also clear title-screen playback and late queues when the session was already absent.
+        for voice in self.mods.values_mut() {
+            voice.revoke();
+        }
+        self.sync(Session::default(), [0.0; 3], 0.0, 1.0);
+        self.announced.clear();
+    }
     pub fn is_empty(&self) -> bool {
         self.mods.is_empty()
     }
@@ -770,7 +779,7 @@ mod tests {
         v.register_channel("test:voice").unwrap();
         v.send_payload(None, "test:voice", vec![1]).unwrap();
         v.resolving = Some(("test".into(), 1, Instant::now()));
-        s.sync(Session::default(), [0.0; 3], 0.0, 1.0);
+        s.disconnect();
         let v = s.voice("one").unwrap();
         assert!(!v.microphone_allowed);
         assert!(v.endpoints.is_empty());

@@ -73,7 +73,7 @@ trusting native code is the player's decision, never an agent's.
 4. **Mixins.** The bundles are copied first, so the build and its key use that copy whatever happens to the
    folder meanwhile. `horizon-mixins apply` stages the modded source; the launcher copies only the files that
    changed into `native/stage/`, so Cargo, which goes by file times, recompiles only the crates the mods touch.
-5. **Compile**: `cargo build --locked --profile release --features horizon-client/mods -p horizon-client`, the
+5. **Compile**: `cargo build --locked --profile release -p horizon-client`, the
    release's own command (game-build.yml), into `native/target/`. Cargo downloads the locked crates from
    crates.io (Horizon has no git dependencies). The log is `native/build.log`; a failure shows its last lines (a
    horizon-mixins diagnostic in one line).

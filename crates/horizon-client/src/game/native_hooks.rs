@@ -334,7 +334,7 @@ impl Game<'_> {
         &mut self,
         mod_id: &str,
     ) -> Result<&mut horizon_mods::native::Voice, String> {
-        self.mods.native_voice.voice(mod_id)
+        self.native_voice.voice(mod_id)
     }
     /// Online player UUIDs/names and tracked positions for positional voice. API 3.
     pub(super) fn native_voice_players(&self) -> Vec<horizon_mods::native::Player> {
@@ -522,8 +522,8 @@ impl Game<'_> {
         self.refresh_native_voice();
         let mut mods = Vec::new();
         self.native_mods(&mut mods);
-        // A WebAssembly mod of the same id doesn't run (`start_mods`): the
-        // native row stands for it, and alone toggles its `mod.<id>` line.
+        // A WebAssembly mod of the same id: the native row stands for it,
+        // and alone toggles its `mod.<id>` line.
         self.settings
             .mods
             .installed
@@ -531,7 +531,7 @@ impl Game<'_> {
         for m in mods {
             let mut buttons = Vec::new();
             self.native_settings(&m.id, &mut buttons);
-            buttons.extend(self.mods.native_voice.permission_buttons(&m.id));
+            buttons.extend(self.native_voice.permission_buttons(&m.id));
             let page = NativePage {
                 keys: m.keys,
                 buttons,
@@ -539,14 +539,10 @@ impl Game<'_> {
             self.settings.mods.installed.push(Installed {
                 id: m.id.clone(),
                 title: m.title,
-                description: m.description
-                    + " "
-                    + &self.mods.native_voice.permission_description(&m.id),
+                description: m.description + " " + &self.native_voice.permission_description(&m.id),
                 problem: None,
                 dev: false,
-                has_settings: false,
                 native: Some(page),
-                requests_microphone: false,
             });
         }
     }
@@ -559,8 +555,7 @@ impl Game<'_> {
         let mut buttons = Vec::new();
         self.native_settings(&id, &mut buttons);
         if button >= buttons.len() {
-            self.mods
-                .native_voice
+            self.native_voice
                 .permission_click(&id, button - buttons.len());
         } else {
             self.native_settings_click(&id, button);
@@ -575,7 +570,7 @@ impl Game<'_> {
         };
         let mut buttons = Vec::new();
         self.native_settings(&id, &mut buttons);
-        buttons.extend(self.mods.native_voice.permission_buttons(&id));
+        buttons.extend(self.native_voice.permission_buttons(&id));
         let row = self.settings.mods.installed.get_mut(i);
         if let Some(page) = row.and_then(|m| m.native.as_mut()) {
             page.buttons = buttons;
@@ -604,11 +599,11 @@ impl Game<'_> {
         self.native_wheel(steps, &mut claimed);
         claimed
     }
-    /// A client mod's command: a native mod's first, then a WebAssembly mod's.
+    /// A native mod's command.
     pub(super) fn client_mod_command(&mut self, command: &str) -> bool {
         let mut ran = false;
         self.native_command(command, &mut ran);
-        ran || self.mod_command(command)
+        ran
     }
     /// The zoom in effect while playing (a native mod's); the spyglass's own
     /// view wins.

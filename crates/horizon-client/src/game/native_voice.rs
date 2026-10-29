@@ -20,7 +20,7 @@ pub(super) fn uuid(value: u128) -> String {
 }
 impl Game<'_> {
     pub(super) fn draw_native_microphone(&self, batch: &mut horizon_client::hud::HudBatch) {
-        let capturing = self.mods.native_voice.capturing();
+        let capturing = self.native_voice.capturing();
         if !capturing.is_empty() {
             self.native_text(
                 batch,
@@ -79,20 +79,15 @@ impl Game<'_> {
                 continue;
             }
             let id = declaration.id.clone();
-            if self.mods.native_voice.register(declaration).is_ok() {
+            if self.native_voice.register(declaration).is_ok() {
                 ids.insert(id);
             }
         }
-        self.mods.native_voice.retain(&ids);
+        self.native_voice.retain(&ids);
     }
     pub(super) fn sync_native_voice(&mut self) {
         self.refresh_native_voice();
-        #[allow(unused_mut)]
-        let mut active = !self.mods.native_voice.is_empty();
-        #[cfg(feature = "mods")]
-        {
-            active |= !self.mods.mods.registered_channels().is_empty();
-        }
+        let active = !self.native_voice.is_empty();
         if !active {
             self.flush_native_voice();
             return;
@@ -131,11 +126,10 @@ impl Game<'_> {
             .player
             .as_ref()
             .map_or([0.0; 3], |p| [p.position.x, p.position.y, p.position.z]);
-        self.mods
-            .native_voice
+        self.native_voice
             .sync(session, position, self.yaw, self.settings.master_volume);
         if !self.focused && self.native_window() {
-            self.mods.native_voice.stop_capture();
+            self.native_voice.stop_capture();
         }
         // Dynamic endpoint requests must be visible even when Options was already open.
         let ids: Vec<_> = self
@@ -149,7 +143,7 @@ impl Game<'_> {
         for id in ids {
             let mut buttons = Vec::new();
             self.native_settings(&id, &mut buttons);
-            buttons.extend(self.mods.native_voice.permission_buttons(&id));
+            buttons.extend(self.native_voice.permission_buttons(&id));
             if let Some(page) = self
                 .settings
                 .mods
@@ -162,7 +156,7 @@ impl Game<'_> {
             }
         }
         for row in &mut self.settings.mods.installed {
-            let description = self.mods.native_voice.permission_description(&row.id);
+            let description = self.native_voice.permission_description(&row.id);
             if !description.is_empty() {
                 row.description = description;
             }
@@ -170,12 +164,8 @@ impl Game<'_> {
         self.flush_native_voice();
     }
     pub(super) fn flush_native_voice(&mut self) {
-        #[allow(unused_mut)]
-        let mut extra = BTreeSet::new();
-        #[cfg(feature = "mods")]
-        extra.extend(self.mods.mods.registered_channels());
-        let mut messages = self.mods.native_voice.announcements(extra);
-        messages.extend(self.mods.native_voice.drain_out());
+        let mut messages = self.native_voice.announcements(BTreeSet::new());
+        messages.extend(self.native_voice.drain_out());
         for message in messages {
             let payload = CustomPayload {
                 channel: message.channel,
@@ -186,13 +176,8 @@ impl Game<'_> {
                     && self.player.is_some()
                     && uuid(self.player_uuid()) == player
                 {
-                    self.mods
-                        .native_voice
+                    self.native_voice
                         .deliver(None, &payload.channel, &payload.data);
-                    #[cfg(feature = "mods")]
-                    self.mods
-                        .mods
-                        .custom_payload(None, &payload.channel, &payload.data);
                 } else if let Some(host) = self.lan.as_mut()
                     && let Some(conn) = host
                         .hub
@@ -207,13 +192,8 @@ impl Game<'_> {
                 self.send(Serverbound::CustomPayload(payload));
             } else if self.player.is_some() {
                 let player = uuid(self.player_uuid());
-                self.mods
-                    .native_voice
+                self.native_voice
                     .deliver(Some(&player), &payload.channel, &payload.data);
-                #[cfg(feature = "mods")]
-                self.mods
-                    .mods
-                    .custom_payload(Some(&player), &payload.channel, &payload.data);
             }
         }
     }

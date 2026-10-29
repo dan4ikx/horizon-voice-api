@@ -1419,26 +1419,8 @@ impl Game<'_> {
             }
             S::CustomPayload(p) => {
                 let player = super::native_voice::uuid(host.hub.guests[gi].uuid);
-                self.mods
-                    .native_voice
+                self.native_voice
                     .deliver(Some(&player), &p.channel, &p.data);
-                #[cfg(feature = "mods")]
-                {
-                    let uuid = host.hub.guests[gi].uuid;
-                    let uuid = format!(
-                        "{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
-                        uuid >> 96,
-                        (uuid >> 80) & 0xffff,
-                        (uuid >> 64) & 0xffff,
-                        (uuid >> 48) & 0xffff,
-                        uuid & 0xffffffffffff
-                    );
-                    self.mods
-                        .mods
-                        .custom_payload(Some(&uuid), &p.channel, &p.data);
-                }
-                #[cfg(not(feature = "mods"))]
-                let _ = p;
             }
             S::ChatCommandSigned(p) => self.guest_signed_command(host, conn, p),
             S::ChangeDifficulty(p) if host.hub.guests[gi].permission >= 2 => {
@@ -1916,10 +1898,6 @@ impl Game<'_> {
                     overlay: false,
                 }),
             );
-            return;
-        }
-        // A server mod's command, for every player whatever their level.
-        if self.guest_server_mod_command(host, conn, command.trim_start_matches('/')) {
             return;
         }
         // An integrated server runs every player's commands at their own

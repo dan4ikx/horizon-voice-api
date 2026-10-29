@@ -850,7 +850,7 @@ mod tests {
         fs::create_dir_all(data.join("other")).unwrap();
         fs::write(
             from.join("horizon-mods.txt"),
-            "mod.zoom:true\nkey.zoom.zoom:key.keyboard.c\nkey.other.x:key.keyboard.x\n",
+            "mod.zoom:true\nmicrophone.zoom:true\nkey.zoom.zoom:key.keyboard.c\nkey.other.x:key.keyboard.x\n",
         )
         .unwrap();
         fs::write(
