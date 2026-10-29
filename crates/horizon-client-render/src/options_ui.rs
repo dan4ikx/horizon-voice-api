@@ -3416,6 +3416,7 @@ mod tests {
             problem: None,
             dev: false,
             has_settings: false,
+            requests_microphone: false,
             native: Some(crate::mod_list::NativePage::default()),
         });
         ui.show(Page::Mods);
