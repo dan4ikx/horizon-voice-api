@@ -1,6 +1,6 @@
 # Design proposal: microphone and scoped networking for native voice mods
 
-> Status: experimental session-only helpers are implemented in Native hooks API 3.
+> Status: experimental session-only helpers are implemented in Native hooks API 4.
 > Persistent grants and the wider UX below remain a proposal.
 
 ## Implemented scope
@@ -110,4 +110,3 @@ The existing WebAssembly implementation can serve as a reference for requirement
 1. Is a clearly documented cooperative permission model acceptable for reviewed native mods, or must these services wait for enforceable OS isolation?
 2. Are exact endpoint approval, renewed approval for changed resolved addresses, and separate local-network consent the desired defaults?
 3. Should the first implementation expose managed native helpers, or only the connection/payload hooks while the permission UI is agreed?
-

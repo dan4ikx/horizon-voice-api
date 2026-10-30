@@ -1,4 +1,4 @@
-//! Bounded connected UDP and DNS workers, shared by native and WASM hosts.
+//! Bounded connected UDP and DNS workers, for native mod services.
 use std::{
     collections::{BTreeSet, HashMap},
     net::{SocketAddr, UdpSocket},

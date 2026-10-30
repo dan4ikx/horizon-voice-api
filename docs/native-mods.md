@@ -30,8 +30,8 @@ on any Horizon whose version is the one it needs or a later one. Its `horizon` i
 pin, else on the installed version's commit (the game the player plays), after checking that commit's
 `NATIVE_HOOKS_API` (read from GitHub) is at least the mod's; when it isn't and nothing pins, it builds on the commit the
 mod was tested on. In its own copy of the mod it sets `horizon_revision` to the commit it builds on. Horizon's
-official mods (Zoom, FPS counter, Keystrokes, Minimap, Recipes) are made this way, so any of them build together
-with no re-release for each Nightly. The launcher passes the `mods` feature only when the source has it: older revisions use it for WebAssembly, while the current native client accepts it as a compatibility no-op.
+own native mods (Zoom, FPS counter, Keystrokes, Minimap; horizon-rust/horizon-mods, `native/<name>/`) are made this way, so any of them build together
+with no re-release for each Nightly. The `mods` feature (WebAssembly mods) is passed to the build only when the source has it.
 
 API 2 adds the item panel beside container screens and its recipe pages (`native_panel_items`,
 `native_panel_recipes`, and the hook `native_panel_event` for the player's clicks, searches and keys over items), and
@@ -39,11 +39,14 @@ the game's items and recipes (`native_recipes`, `native_known_recipes`, `native_
 recipe viewer needs, in builds with or without the `mods` feature. A WebAssembly mod's panel shows only while no native
 mod shows one.
 
-API 3 adds [native audio and networking services](native-voice.md): `native_voice_mods`
+API 3 adds authoritative world lifecycle events through `native_world_lifecycle`: open ready, open failed,
+and final close. Bundles that use these events need `"hooks": 3`.
+
+API 4 adds [native audio and networking services](native-voice.md): `native_voice_mods`
 declares service users, and `native_voice` exposes per-mod microphone capture, PCM playback,
-scoped UDP/DNS, custom payloads, connection/player events and secure randomness. These work
-without the WebAssembly `mods` feature. Sensitive service access requires separate session
-consent in Options > Mods > Settings; native code still has full OS rights.
+scoped UDP/DNS, custom payloads, connection/player events and secure randomness.
+Sensitive service access requires separate session consent in Options > Mods > Settings;
+native code still has full OS rights. Bundles using these services need `"hooks": 4`.
 
 ## What the launcher does
 
@@ -73,7 +76,7 @@ trusting native code is the player's decision, never an agent's.
 4. **Mixins.** The bundles are copied first, so the build and its key use that copy whatever happens to the
    folder meanwhile. `horizon-mixins apply` stages the modded source; the launcher copies only the files that
    changed into `native/stage/`, so Cargo, which goes by file times, recompiles only the crates the mods touch.
-5. **Compile**: `cargo build --locked --profile release -p horizon-client`, the
+5. **Compile**: `cargo build --locked --profile release --features horizon-client/mods -p horizon-client`, the
    release's own command (game-build.yml), into `native/target/`. Cargo downloads the locked crates from
    crates.io (Horizon has no git dependencies). The log is `native/build.log`; a failure shows its last lines (a
    horizon-mixins diagnostic in one line).
@@ -121,19 +124,15 @@ Only the native builds an instance plays are kept (`native_mods::prune`); `nativ
 
 ## Trust
 
-The experimental session-only services and their consent controls are described in
-[Native voice services](native-voice.md). The broader
-[permission design](native-voice-permissions.md) also discusses future persistent grants.
-These controls govern Horizon helpers; they do not sandbox native code.
-
 - **Off until the player installs one.** Settings → Game → Native mods stays off for a player who never installs a
   native mod; the first install shows the notice and turns it on. The command needs `--trust-native-code`; the window
   shows a warning in red before every build: the mods run with full access to the computer, and their ids and
   versions. The Mods page says who made each one, and "Not made or endorsed by the Horizon project" for any mod not
   Horizon's own.
 - **The registry** (horizon-rust/horizon-mods) lists them as their own kind, `native-mod`, only after a maintainer
-  has read the source: the `.hnmod` *is* the source (only `.rs` and `.toml`, checked without running anything),
-  pinned by SHA-256 like every registry file. An update is reviewed again; `revoked.toml` takes one down.
+  has read the source: the `.hnmod` contains `.rs` and `.toml` files and may contain data files under
+  `mixins/<id>/data/`. The launcher checks the bundle without running anything. Native code is trusted.
+  The file is pinned by SHA-256 like every registry file. An update is reviewed again; `revoked.toml` takes one down.
   A WebAssembly mod's entry may turn `native-mod` once (never back): its `.hmod` versions stay published and
   are checked as `.hmod`s, the index lists only its `.hnmod` versions, and the launcher's update keeps the
   player's `.hmod` (the game runs it until a native build has the mod, then skips it); removing the mod removes both.
@@ -146,9 +145,18 @@ These controls govern Horizon helpers; they do not sandbox native code.
 - **Single player and LAN host:** the mods run in the host's game and its integrated server, so a server-side
   hook applies to every player of the world.
 - **Joining a server:** only client-side hooks do anything; the protocol is unchanged.
-- **Dedicated servers:** not built yet; the same pipeline can build the server (`--no-default-features`).
+- **Dedicated servers:** native mods are not built yet. Lifecycle hook call sites are ready for when the pipeline builds them (`--no-default-features`).
 
 ## Left to do
 
 - Rebuild after the mods or the Nightly change (asking first, as it compiles for minutes).
 - A prebuilt horizon-mixins from its CI instead of building it on the player's computer.
+
+## Named hook catalog (draft)
+
+`native-hooks.json` maps stable hook names and contract versions to the current
+source targets. A contract includes the signature, call timing and behavior.
+Keep an existing contract or add a new version when it changes incompatibly.
+The catalog does not cover helper methods or arbitrary private game code.
+Named injection resolution needs a matching horizon-mixins change; existing raw
+targets and the `hooks` metadata continue to work as before.

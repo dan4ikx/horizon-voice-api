@@ -1,4 +1,4 @@
-# Native voice services (experimental, hook API 3)
+# Native voice services (experimental, hook API 4)
 
 Native mods can implement audio and networking through `native_voice_mods` and
 `native_voice` in `game/native_hooks.rs`. No WIT import, component or WebAssembly
@@ -75,7 +75,7 @@ executable WASM `.hmod` files are retained but no longer loaded, while content-o
 packages keep working. The `horizon-client/mods` flag is retained as a no-op for existing build and CI
 commands; it enables no runtime or additional dependencies. Voice services,
 custom payload routing and permission controls use the native game lifecycle.
-The old WASM SDK/runtime crates remain legacy tooling until their separate removal.
+The upstream removal of the WASM runtime and SDK is included; legacy code mods and SDK examples are no longer built.
 
 [#3352](https://github.com/horizon-rust/horizon/pull/3352) is already included:
 the launcher copies a mod's `.horizon-mod-data/<id>/` folder and `key.<id>.`
@@ -158,7 +158,7 @@ microphone locally while V is held and offers explicit binary diagnostics:
 - `/voice_hello` sends version 1 on `voice_lab:hello`.
 
 Build it with the [native mod workflow](native-mods.md) on a revision supporting
-hook API 3. Trust/build approval is the player's decision. Use headphones for
+hook API 4. Trust/build approval is the player's decision. Use headphones for
 the local microphone monitor. The example never transmits captured PCM.
 Its helper files are type-checked against the real Game by the binary's test
 configuration. Applying the bundle with horizon-mixins, physical devices and
