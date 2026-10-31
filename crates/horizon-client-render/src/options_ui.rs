@@ -3989,7 +3989,10 @@ mod tests {
                 false,
                 false,
             );
-            assert_eq!(events, [Event::ButtonClick, Event::NativePermission(0, 912)]);
+            assert_eq!(
+                events,
+                [Event::ButtonClick, Event::NativePermission(0, 912)]
+            );
         }
     }
 

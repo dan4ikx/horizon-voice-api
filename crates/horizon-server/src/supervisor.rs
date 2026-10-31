@@ -40,8 +40,19 @@ pub fn note(shared: &Shared, level: &str, message: &str) {
     shared.log.lock().unwrap().push(line);
 }
 
-/// The folder's lock: one supervisor per server folder. Released when the process ends, even by a crash.
-pub fn lock(dir: &Path) -> Result<File, String> {
+/// Explicitly unlock before closing: a concurrently forked child may still hold a copy of the
+/// descriptor until exec. Closing only our copy would leave the folder locked during that window.
+#[derive(Debug)]
+pub struct FolderLock(File);
+
+impl Drop for FolderLock {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
+}
+
+/// The folder's lock: one supervisor per server folder. Released on drop or process exit.
+pub fn lock(dir: &Path) -> Result<FolderLock, String> {
     let state = dir.join(".horizon");
     std::fs::create_dir_all(&state).map_err(|e| format!("{}: {e}", state.display()))?;
     let file = File::options()
@@ -51,7 +62,7 @@ pub fn lock(dir: &Path) -> Result<File, String> {
         .open(state.join("lock"))
         .map_err(|e| e.to_string())?;
     match file.try_lock() {
-        Ok(()) => Ok(file),
+        Ok(()) => Ok(FolderLock(file)),
         Err(std::fs::TryLockError::WouldBlock) => {
             Err(format!("a server is already running in {}", dir.display()))
         }
@@ -852,17 +863,27 @@ mod tests {
         let first = lock(&dir).unwrap();
         assert!(lock(&dir).unwrap_err().contains("already running"));
         drop(first);
-        // A process another test spawns holds a copy of the lock's descriptor between its fork and exec:
-        // the lock comes back once that child has exec'd.
-        let mut again = lock(&dir);
-        for _ in 0..50 {
-            if again.is_ok() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(20));
-            again = lock(&dir);
-        }
-        again.unwrap();
+        let again = lock(&dir).unwrap();
+        drop(again);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dropping_the_guard_unlocks_with_an_inherited_descriptor() {
+        let dir = std::env::temp_dir().join(format!(
+            "horizon-server-lock-inherited-{}",
+            std::process::id()
+        ));
+        let first = lock(&dir).unwrap();
+        // dup shares the open file description, as an unrelated child's fork does before exec.
+        let inherited = first.0.try_clone().unwrap();
+        assert!(lock(&dir).is_err());
+        drop(first);
+        let second = lock(&dir).expect("the parent's drop must release the lock immediately");
+        drop(inherited);
+        assert!(lock(&dir).is_err(), "the new owner must keep its lock");
+        drop(second);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }
