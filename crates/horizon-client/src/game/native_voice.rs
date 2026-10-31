@@ -1,6 +1,7 @@
 //! Game-thread integration for native voice services, independent of WASM.
-use super::Game;
-use horizon_mods::native::{Declaration, Session};
+use super::{Game, Screen};
+use horizon_client::{lang, mod_list::NativePermissionButton};
+use horizon_mods::native::{Declaration, PermissionKind, Session};
 use horizon_protocol::packets::{
     configuration::CustomPayload,
     play::{Clientbound, Serverbound},
@@ -24,10 +25,7 @@ impl Game<'_> {
         if !capturing.is_empty() {
             self.native_text(
                 batch,
-                &format!(
-                    "Microphone: {} (Options > Mods to stop)",
-                    capturing.join(", ")
-                ),
+                &lang::tr("horizon.voice.capturing", &[&capturing.join(", ")]),
                 [4.0, 4.0],
                 0xff5555,
                 true,
@@ -35,34 +33,25 @@ impl Game<'_> {
         }
     }
     pub(super) fn native_voice_player_snapshot(&self) -> Vec<horizon_mods::native::Player> {
-        let mut players = self.native_remote_voice_players();
-        if self.remote.is_none() {
-            players.extend(
-                self.lan
-                    .as_ref()
-                    .into_iter()
-                    .flat_map(|h| &h.hub.guests)
-                    .filter(|g| g.placed)
-                    .map(|g| horizon_mods::native::Player {
-                        id: uuid(g.uuid),
-                        name: g.name.clone(),
-                        position: Some(g.position),
-                        dimension: Some(g.dimension.clone()),
-                    }),
-            );
+        if !self.options.execution_role.is_client() {
+            return self
+                .native_server_players()
+                .into_iter()
+                .map(|p| horizon_mods::native::Player {
+                    id: uuid(p.uuid),
+                    name: p.name,
+                    position: Some(p.position),
+                    dimension: Some(p.dimension),
+                })
+                .collect();
         }
-        if let Some(player) = &self.player {
-            let id = self
-                .remote
-                .as_ref()
-                .map_or_else(|| uuid(self.player_uuid()), |r| uuid(r.profile));
+        let mut players = self.native_remote_voice_players();
+        if let (Some(remote), Some(player)) = (&self.remote, &self.player) {
+            let id = uuid(remote.profile);
             players.retain(|p| p.id != id);
             players.push(horizon_mods::native::Player {
                 id,
-                name: self.remote.as_ref().map_or_else(
-                    || super::chat::PLAYER_NAME.to_owned(),
-                    |r| r.session.name.clone(),
-                ),
+                name: remote.profile_name.clone(),
                 position: Some([player.position.x, player.position.y, player.position.z]),
                 dimension: Some(self.dim.id().to_owned()),
             });
@@ -85,40 +74,129 @@ impl Game<'_> {
         }
         self.native_voice.retain(&ids);
     }
+    /// Synchronize engine permission snapshots without calling any mod settings hooks.
+    /// Normal buttons and the mod's description are kept intact. Unchanged pages are not rebuilt.
+    pub(super) fn refresh_native_voice_permissions(&mut self) {
+        let pages: Vec<_> = self
+            .settings
+            .mods
+            .installed
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| m.native.is_some())
+            .map(|(i, m)| (i, self.native_permission_buttons(&m.id)))
+            .collect();
+        for (i, permissions) in pages {
+            if let Some(page) = self.settings.mods.installed[i].native.as_mut()
+                && page.permissions != permissions
+            {
+                page.permissions = permissions;
+            }
+        }
+    }
+    fn native_permission_buttons(&self, id: &str) -> Vec<NativePermissionButton> {
+        let Some(d) = self.native_voice.declaration(id) else {
+            return Vec::new();
+        };
+        let server = self
+            .native_voice
+            .session()
+            .server
+            .clone()
+            .unwrap_or_else(|| lang::tr("horizon.voice.no_server", &[]));
+        let tooltip = lang::tr(
+            "horizon.voice.permission_summary",
+            &[&d.title, &d.version, &d.author, &d.purpose, &server],
+        );
+        self.native_voice
+            .permissions(id)
+            .into_iter()
+            .map(|p| {
+                let (label, active) = match p.kind {
+                    PermissionKind::Microphone { requested } => {
+                        let key = if !requested {
+                            "horizon.voice.microphone_not_requested"
+                        } else if p.allowed {
+                            "horizon.voice.microphone_allowed"
+                        } else {
+                            "horizon.voice.microphone_blocked"
+                        };
+                        (
+                            lang::tr(key, &[]),
+                            requested && self.native_voice.session().connected,
+                        )
+                    }
+                    kind => {
+                        let (kind_key, host, port) = match kind {
+                            PermissionKind::Dns { host, port } => ("horizon.voice.dns", host, port),
+                            PermissionKind::Udp { host, port, local } => (
+                                if local {
+                                    "horizon.voice.udp_local"
+                                } else {
+                                    "horizon.voice.udp_public"
+                                },
+                                host,
+                                port,
+                            ),
+                            PermissionKind::Microphone { .. } => unreachable!(),
+                        };
+                        let action = lang::tr(
+                            if p.allowed {
+                                "horizon.voice.revoke"
+                            } else {
+                                "horizon.voice.allow"
+                            },
+                            &[],
+                        );
+                        (
+                            lang::tr(
+                                "horizon.voice.endpoint",
+                                &[&lang::tr(kind_key, &[]), &host, &port, &action],
+                            ),
+                            self.native_voice.session().connected,
+                        )
+                    }
+                };
+                NativePermissionButton {
+                    id: p.id,
+                    label,
+                    tooltip: tooltip.clone(),
+                    active,
+                }
+            })
+            .collect()
+    }
     pub(super) fn sync_native_voice(&mut self) {
         self.refresh_native_voice();
-        let active = !self.native_voice.is_empty();
-        if !active {
+        if self.native_voice.is_empty() {
+            if self.screen == Screen::Options
+                && matches!(
+                    self.ui.options.page(),
+                    horizon_client::options_ui::Page::NativeMod(_)
+                )
+            {
+                self.refresh_native_voice_permissions();
+            }
             self.flush_native_voice();
             return;
         }
         let server_side = !self.options.execution_role.is_client();
-        let local_player = self.player.as_ref().map(|_| {
-            self.remote
-                .as_ref()
-                .map_or_else(|| uuid(self.player_uuid()), |r| uuid(r.profile))
-        });
-        let mut players = self.native_remote_voice_ids();
-        players.extend(
-            self.lan
-                .as_ref()
-                .into_iter()
-                .flat_map(|h| &h.hub.guests)
-                .filter(|g| g.placed)
-                .map(|g| uuid(g.uuid)),
-        );
-        if let Some(id) = &local_player
-            && !players.contains(id)
-        {
-            players.push(id.clone());
-        }
+        let local_player = self
+            .remote
+            .as_ref()
+            .filter(|_| self.player.is_some())
+            .map(|r| uuid(r.profile));
+        let players = self
+            .native_voice_player_snapshot()
+            .into_iter()
+            .map(|p| p.id)
+            .collect();
         let session = Session {
-            connected: server_side || self.player.is_some(),
+            connected: server_side || local_player.is_some(),
             connection: self.remote.as_ref().map_or(0, |r| r.session.connection_id),
             server: self.remote.as_ref().map(|r| r.session.address.clone()),
             local_player,
             server_side,
-            hosting: server_side || (self.remote.is_none() && self.player.is_some()),
             focused: self.focused,
             players,
         };
@@ -131,35 +209,13 @@ impl Game<'_> {
         if !self.focused && self.native_window() {
             self.native_voice.stop_capture();
         }
-        // Dynamic endpoint requests must be visible even when Options was already open.
-        let ids: Vec<_> = self
-            .settings
-            .mods
-            .installed
-            .iter()
-            .filter(|m| m.native.is_some())
-            .map(|m| m.id.clone())
-            .collect();
-        for id in ids {
-            let mut buttons = Vec::new();
-            self.native_settings(&id, &mut buttons);
-            buttons.extend(self.native_voice.permission_buttons(&id));
-            if let Some(page) = self
-                .settings
-                .mods
-                .installed
-                .iter_mut()
-                .find(|m| m.id == id)
-                .and_then(|m| m.native.as_mut())
-            {
-                page.buttons = buttons;
-            }
-        }
-        for row in &mut self.settings.mods.installed {
-            let description = self.native_voice.permission_description(&row.id);
-            if !description.is_empty() {
-                row.description = description;
-            }
+        if self.screen == Screen::Options
+            && matches!(
+                self.ui.options.page(),
+                horizon_client::options_ui::Page::NativeMod(_)
+            )
+        {
+            self.refresh_native_voice_permissions();
         }
         self.flush_native_voice();
     }
@@ -172,13 +228,8 @@ impl Game<'_> {
                 data: message.data,
             };
             if let Some(player) = message.player {
-                if self.remote.is_none()
-                    && self.player.is_some()
-                    && uuid(self.player_uuid()) == player
-                {
-                    self.native_voice
-                        .deliver(None, &payload.channel, &payload.data);
-                } else if let Some(host) = self.lan.as_mut()
+                if !self.options.execution_role.is_client()
+                    && let Some(host) = self.lan.as_mut()
                     && let Some(conn) = host
                         .hub
                         .guests
@@ -190,10 +241,6 @@ impl Game<'_> {
                 }
             } else if self.remote.is_some() {
                 self.send(Serverbound::CustomPayload(payload));
-            } else if self.player.is_some() {
-                let player = uuid(self.player_uuid());
-                self.native_voice
-                    .deliver(Some(&player), &payload.channel, &payload.data);
             }
         }
     }

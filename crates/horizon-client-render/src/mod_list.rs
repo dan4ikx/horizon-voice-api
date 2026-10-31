@@ -12,6 +12,11 @@ use std::{
 pub const FILE: &str = "horizon-mods.txt";
 /// The folder holding `.hmod` files, beside `options.txt`.
 pub const DIR: &str = "horizon-mods";
+/// Where the launcher installs native mods (`<id>.hnmod`), beside [`DIR`]. They run only in a
+/// game the launcher built with them.
+pub const NATIVE_DIR: &str = "horizon-native-mods";
+/// Why a native mod installed in [`NATIVE_DIR`] doesn't run in this game.
+pub const NOT_BUILT: &str = "Installed, not built into this game: build the game with it in the launcher (Settings > Native mods), then play the instance that build is in.";
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ModList {
@@ -50,6 +55,16 @@ pub struct NativePage {
     /// Each key's name, label and default key (`key.keyboard.z`).
     pub keys: Vec<[String; 3]>,
     pub buttons: Vec<String>,
+    /// Engine-owned permission actions, separate from a mod's positional buttons.
+    pub permissions: Vec<NativePermissionButton>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct NativePermissionButton {
+    pub id: u64,
+    pub label: String,
+    pub tooltip: String,
+    pub active: bool,
 }
 
 impl ModList {

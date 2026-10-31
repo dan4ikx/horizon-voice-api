@@ -1,6 +1,6 @@
 # Design proposal: microphone and scoped networking for native voice mods
 
-> Status: experimental session-only helpers are implemented in Native hooks API 4.
+> Status: proposed permission design awaiting modding-lead review. The fork contains experimental session-only helpers on native hook API 41; this is not an upstream-approved permission policy.
 > Persistent grants and the wider UX below remain a proposal.
 
 ## Implemented scope
@@ -81,7 +81,7 @@ Extend the additive native hook API rather than the WIT world. Exact signatures 
 
 Use tick/frame hooks to deliver bounded owned events on the game thread. Device and network workers must not call mod hooks with borrowed game state. Audio callbacks consume bounded queues, without invoking mod callbacks, prompting, or waiting on the game thread. Overflow drops data with a visible diagnostic counter rather than accumulating latency.
 
-Use finite per-mod and global limits for sockets, DNS jobs, packet size/rate, event queues and PCM buffers. Proposed starting limits for discussion are four sockets and four pending DNS jobs per mod, 1,200-byte UDP payloads and at most 200 ms of queued PCM per source. Packet/byte rate limits and global budgets need agreement and interoperability measurements before implementation. These are helper safeguards, not limits on arbitrary native code.
+Use finite per-mod and global limits for sockets, DNS jobs, packet size/rate, event queues and PCM buffers. The fork currently uses four sockets per mod, one pending DNS job per mod and four DNS jobs globally, 1,200-byte UDP payloads, 256 datagrams per second per direction and at most 200 ms of queued PCM per source. Custom payloads share 32 messages / 64 KiB per game tick; entropy shares 4 KiB per game tick. These experimental limits still need agreement and interoperability measurements before upstream inclusion. These are helper safeguards, not limits on arbitrary native code.
 
 All pending requests are deduplicated by mod, session and scope, so a tick hook cannot generate a
 prompt every frame. A denial lasts for the session unless the player changes it in settings. Helpers
@@ -95,7 +95,7 @@ change must update `NATIVE_HOOKS_API` and continue to support builds without the
 
 ## Delivery and acceptance
 
-1. Agree on the trust statement, prompt wording, grant identity and endpoint rules in this issue.
+1. Agree on the trust statement, prompt wording, grant identity and endpoint rules in the design review.
 2. Add the smallest native hooks and permission state/UI changes, independently of audio or networking backends.
 3. Add microphone/playback helpers and a local PTT monitor example.
 4. Add scoped DNS/UDP helpers and an endpoint diagnostic example.
@@ -103,9 +103,9 @@ change must update `NATIVE_HOOKS_API` and continue to support builds without the
 
 Focused validation should cover denial without DNS/device access, per-mod and per-instance isolation of helper grants, changed bundle reapproval, endpoint changes, rebinding and local-address classification, disconnect/revoke during pending work, stale callback suppression, bounded queues, multiple mods, and builds with and without optional audio support.
 
-The existing WebAssembly implementation can serve as a reference for requirements, but should not be rebased wholesale over the native-mod transition.
+The archived WebAssembly work is historical context only; the current native contract has no WIT interfaces or WASM runtime.
 
-## Decisions before implementation
+## Decisions before upstream inclusion
 
 1. Is a clearly documented cooperative permission model acceptable for reviewed native mods, or must these services wait for enforceable OS isolation?
 2. Are exact endpoint approval, renewed approval for changed resolved addresses, and separate local-network consent the desired defaults?

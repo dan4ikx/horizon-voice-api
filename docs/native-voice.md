@@ -1,9 +1,8 @@
-# Native voice services (experimental, hook API 4)
+# Native voice services (experimental, hook API 41)
 
 Native mods can implement audio and networking through `native_voice_mods` and
 `native_voice` in `game/native_hooks.rs`. No WIT import, component or WebAssembly
-runtime is involved. A build without the `mods` feature supports the same API;
-without `audio`, device operations return an error while networking still works.
+runtime is involved. Native services are always compiled; without `audio`, device operations return an error while networking still works.
 
 This API supplies transports and PCM. A separate mod must implement its voice
 protocol, codec, authentication, encryption and compatibility negotiation.
@@ -33,7 +32,7 @@ The registry holds at most 32 users. An invalid declaration is not registered.
 In a native frame, tick, key or command hook, call
 `game.native_voice("my_voice")?` to obtain `&mut horizon_mods::native::Voice`.
 The native registry lives directly on `Game`, independently of the content mod
-list. The connection snapshot and budgets are updated before tick/frame hooks.
+list. The connection snapshot is updated before tick/frame hooks. Payload and entropy budgets reset only once per game tick, shared by all hooks and frames in that tick.
 Workers communicate through bounded owned queues; mod code runs on the game thread. Pending payload output is routed after those hooks (other hooks'
 output is flushed by the next frame/tick). The typed Rust API is
 `horizon_mods::native`; mixin helpers already have access to this game dependency.
@@ -48,13 +47,15 @@ stops capture immediately; the HUD indicator remains visible even under F1 and
 points to these controls. Focus loss stops capture and prevents another start
 until the window regains focus. OS microphone permission is still required.
 
+Permission buttons are engine-owned actions with stable ids captured in the displayed page, separate from a mod's own buttons. Stale actions after revocation, reconnect or bundle changes are ignored. Normal settings hooks run when a page opens or a mod button is clicked, not on frame synchronization; unchanged permission rows and the mod's original description are preserved.
+
 `request_endpoint(host, port)` only creates a deduplicated UI request, limited
 to 16 per mod. Hostnames and numeric IPs are separate scopes. Approving DNS
 allows only that exact hostname/port to be resolved with the system resolver.
 The mod polls `resolved()` and each resulting numeric address creates a new
 UDP consent request. Approving a hostname never approves its returned IPs.
 The numeric peer is validated and pinned when connecting. A different IP or
-port needs its own consent. Loopback/private endpoints say LOCAL NETWORK;
+port needs its own consent. Loopback/private/CGNAT endpoints say LOCAL NETWORK;
 public peers say PUBLIC UDP. No server advertisement can grant consent.
 
 Revoking a network scope closes the mod's sockets and cancels its pending
@@ -72,8 +73,7 @@ warning and source review remain necessary. See the
 
 The client follows [#3350](https://github.com/horizon-rust/horizon/pull/3350):
 executable WASM `.hmod` files are retained but no longer loaded, while content-only
-packages keep working. The `horizon-client/mods` flag is retained as a no-op for existing build and CI
-commands; it enables no runtime or additional dependencies. Voice services,
+packages keep working. The unused `horizon-client/mods` compatibility flag has been removed. Voice services,
 custom payload routing and permission controls use the native game lifecycle.
 The upstream removal of the WASM runtime and SDK is included; legacy code mods and SDK examples are no longer built.
 
@@ -116,7 +116,7 @@ consumer timeout. It never runs synchronously on the game thread.
 Connected sockets accept only their peer. No listening sockets, multicast,
 broadcast, unspecified or link-local destinations are exposed. UDP has no
 built-in encryption or reliability. `random_bytes(length)` provides OS entropy,
-limited to 1,024 bytes per call and 4,096 per game hook budget.
+limited to 1,024 bytes per call and 4,096 per game tick.
 
 ## Minecraft payloads and player events
 
@@ -127,8 +127,8 @@ allowed. The game announces the union of active native subscriptions so one mod 
 unregister another mod's channel.
 
 Clients pass `None` for the target; server mods pass an online player's UUID
-from `voice.session().players`. In-frame hosts can also target their local
-player. `Event::Packet` contains a verified sender UUID on the server and
+from `voice.session().players`. Single player uses the integrated server and its
+normal client connection. `Event::Packet` contains a verified sender UUID on the server and
 `None` for the connected server on a client. Native handlers do not consume
 vanilla channels or another mod's messages.
 
@@ -141,7 +141,7 @@ no position, rather than an invented location. Server-side
 hooks run on the integrated or dedicated server's own Game. Voice devices/UDP
 are client services; server custom payloads do not require them.
 
-Payloads are limited to 32,767 bytes each and 32 messages / 64 KiB per budget;
+Payloads are limited to 32,767 bytes each and 32 messages / 64 KiB per game tick;
 the inbox holds at most 64 events / 256 KiB of packet data and drops oldest
 entries on overflow. Mods choose their own version handshake in the bytes.
 
@@ -158,7 +158,7 @@ microphone locally while V is held and offers explicit binary diagnostics:
 - `/voice_hello` sends version 1 on `voice_lab:hello`.
 
 Build it with the [native mod workflow](native-mods.md) on a revision supporting
-hook API 4. Trust/build approval is the player's decision. Use headphones for
+hook API 41. Trust/build approval is the player's decision. Use headphones for
 the local microphone monitor. The example never transmits captured PCM.
 Its helper files are type-checked against the real Game by the binary's test
 configuration. Applying the bundle with horizon-mixins, physical devices and

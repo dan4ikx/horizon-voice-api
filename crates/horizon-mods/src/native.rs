@@ -4,6 +4,7 @@ use crate::transport::{Datagrams, endpoint};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     net::{IpAddr, SocketAddr},
+    sync::atomic::{AtomicU64, Ordering},
     time::{Duration, Instant},
 };
 
@@ -67,7 +68,6 @@ pub struct Session {
     pub server: Option<String>,
     pub local_player: Option<String>,
     pub server_side: bool,
-    pub hosting: bool,
     pub focused: bool,
     pub players: Vec<String>,
 }
@@ -86,8 +86,36 @@ pub enum Event {
     Packet(Message),
     PermissionsChanged,
 }
+/// An opaque UI action id. It changes on revoke, session change or a grant toggle.
+/// The UI sends the id it displayed, never an index in a mod's button list.
+static NEXT_PERMISSION: AtomicU64 = AtomicU64::new(1);
+fn permission_id() -> u64 {
+    NEXT_PERMISSION.fetch_add(1, Ordering::Relaxed)
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PermissionKind {
+    Microphone {
+        requested: bool,
+    },
+    Dns {
+        host: String,
+        port: u16,
+    },
+    Udp {
+        host: String,
+        port: u16,
+        local: bool,
+    },
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Permission {
+    pub id: u64,
+    pub kind: PermissionKind,
+    pub allowed: bool,
+}
 #[derive(Clone, Debug)]
 struct Destination {
+    id: u64,
     host: String,
     port: u16,
     allowed: bool,
@@ -99,6 +127,7 @@ pub struct Voice {
     pcm: pcm::Pcm,
     transport: Datagrams,
     microphone_allowed: bool,
+    microphone_id: u64,
     endpoints: Vec<Destination>,
     resolving: Option<(String, u16, Instant)>,
     events: VecDeque<Event>,
@@ -117,6 +146,7 @@ impl Voice {
             pcm: pcm::Pcm::default(),
             transport: Datagrams::default(),
             microphone_allowed: false,
+            microphone_id: permission_id(),
             endpoints: Vec::new(),
             resolving: None,
             events: VecDeque::new(),
@@ -146,6 +176,7 @@ impl Voice {
     }
     fn revoke(&mut self) {
         self.microphone_allowed = false;
+        self.microphone_id = permission_id();
         self.endpoints.clear();
         self.resolving = None;
         self.transport.reset();
@@ -258,6 +289,7 @@ impl Voice {
             return Err("endpoint request limit reached".into());
         }
         self.endpoints.push(Destination {
+            id: permission_id(),
             host,
             port,
             allowed: false,
@@ -294,10 +326,7 @@ impl Voice {
         match self.transport.resolved() {
             Ok(Some(ips)) => {
                 self.resolving = None;
-                for ip in &ips {
-                    self.request_endpoint(ip, port)?;
-                }
-                Ok(Some(ips))
+                Ok(Some(self.accept_resolved(ips, port)))
             }
             Err(e) => {
                 self.resolving = None;
@@ -305,6 +334,12 @@ impl Voice {
             }
             Ok(None) => Ok(None),
         }
+    }
+    fn accept_resolved(&mut self, ips: Vec<String>, port: u16) -> Vec<String> {
+        // A full consent list must not turn a partially successful lookup into an error.
+        ips.into_iter()
+            .filter(|ip| self.request_endpoint(ip, port).is_ok())
+            .collect()
     }
     pub fn connect_udp(&mut self, address: &str) -> Result<u32, String> {
         let address = endpoint(address)?;
@@ -363,7 +398,7 @@ impl Voice {
         if !self.session.connected || !self.channels.contains(channel) {
             return Err("no session or channel is not registered".into());
         }
-        if player.is_some() && (self.session.server_side || self.session.hosting) {
+        if player.is_some() && self.session.server_side {
             if !player
                 .as_ref()
                 .is_some_and(|id| self.session.players.contains(id))
@@ -411,7 +446,12 @@ fn channel_ok(channel: &str) -> bool {
 }
 fn local(ip: IpAddr) -> bool {
     match ip {
-        IpAddr::V4(v) => v.is_private() || v.is_loopback() || v.is_link_local(),
+        IpAddr::V4(v) => {
+            v.is_private()
+                || v.is_loopback()
+                || v.is_link_local()
+                || (u32::from(v) & 0xffc0_0000) == 0x6440_0000
+        }
         IpAddr::V6(v) => v
             .to_ipv4_mapped()
             .map(|v| local(IpAddr::V4(v)))
@@ -525,9 +565,6 @@ impl Services {
                 voice.event(Event::PlayerLeft(id.clone()));
             }
             voice.session = session.clone();
-            voice.bytes_left = 65536;
-            voice.packets_left = 32;
-            voice.entropy = 4096;
             voice.pcm.listener(listener, yaw);
             voice.pcm.master_gain(master);
         }
@@ -535,6 +572,20 @@ impl Services {
             self.announced.clear();
         }
         self.session = session;
+    }
+    /// Once per game tick, never per frame or snapshot update.
+    pub fn new_tick(&mut self) {
+        for voice in self.mods.values_mut() {
+            voice.bytes_left = 65536;
+            voice.packets_left = 32;
+            voice.entropy = 4096;
+        }
+    }
+    pub fn declaration(&self, id: &str) -> Option<&Declaration> {
+        self.mods.get(id).map(|v| &v.declaration)
+    }
+    pub fn session(&self) -> &Session {
+        &self.session
     }
     pub fn deliver(&mut self, player: Option<&str>, channel: &str, data: &[u8]) {
         if data.len() > 32767 {
@@ -591,20 +642,6 @@ impl Services {
             .flat_map(|v| std::mem::take(&mut v.out))
             .collect()
     }
-    /// Labels identify the mod declaration and exact scope. Session only.
-    pub fn permission_description(&self, id: &str) -> String {
-        let Some(v) = self.mods.get(id) else {
-            return String::new();
-        };
-        format!(
-            "{} {} by {}. {}. Server: {}. Grants last only for this connection. Native code runs with OS rights; these controls govern Horizon helpers only.",
-            v.declaration.title,
-            v.declaration.version,
-            v.declaration.author,
-            v.declaration.purpose,
-            self.session.server.as_deref().unwrap_or("local world")
-        )
-    }
     pub fn capturing(&self) -> Vec<String> {
         self.mods
             .values()
@@ -612,73 +649,68 @@ impl Services {
             .map(|v| v.declaration.title.clone())
             .collect()
     }
-    pub fn permission_buttons(&self, id: &str) -> Vec<String> {
+    /// Structured scopes for a localized UI. Ids identify the exact displayed action.
+    pub fn permissions(&self, id: &str) -> Vec<Permission> {
         let Some(v) = self.mods.get(id) else {
             return Vec::new();
         };
-        let d = &v.declaration;
-        let mut buttons = vec![format!(
-            "Microphone: {} (session)",
-            if v.microphone_allowed {
-                "Allowed — stop/revoke"
-            } else {
-                "Blocked — allow raw audio"
-            }
-        )];
-        if !d.microphone {
-            buttons[0] = "Microphone: not requested".into();
-        }
+        let mut permissions = vec![Permission {
+            id: v.microphone_id,
+            kind: PermissionKind::Microphone {
+                requested: v.declaration.microphone,
+            },
+            allowed: v.microphone_allowed,
+        }];
         for e in &v.endpoints {
-            let kind = e
-                .host
-                .parse::<IpAddr>()
-                .map(|ip| {
-                    if local(ip) {
-                        "LOCAL NETWORK UDP"
-                    } else {
-                        "PUBLIC UDP"
-                    }
-                })
-                .unwrap_or("DNS (system resolver)");
-            buttons.push(format!(
-                "{} {}:{} — {}",
+            let kind = match e.host.parse::<IpAddr>() {
+                Ok(ip) => PermissionKind::Udp {
+                    host: e.host.clone(),
+                    port: e.port,
+                    local: local(ip),
+                },
+                Err(_) => PermissionKind::Dns {
+                    host: e.host.clone(),
+                    port: e.port,
+                },
+            };
+            permissions.push(Permission {
+                id: e.id,
                 kind,
-                e.host,
-                e.port,
-                if e.allowed {
-                    "Allowed — revoke"
-                } else {
-                    "Allow this session"
-                }
-            ));
+                allowed: e.allowed,
+            });
         }
-        buttons
+        permissions
     }
-    /// Called only from the game's own Options button handler, never automatically by a packet.
-    pub fn permission_click(&mut self, id: &str, button: usize) {
+    /// Only from the game's Options action, using the id captured when the button was drawn.
+    /// Old events cannot grant a different scope, another mod, or a reconnected session.
+    pub fn permission_click(&mut self, id: &str, permission: u64) -> bool {
         let Some(v) = self.mods.get_mut(id) else {
-            return;
+            return false;
         };
         if !v.session.connected {
-            return;
+            return false;
         }
-        if button == 0 {
-            if v.declaration.microphone && !v.session.server_side {
-                v.microphone_allowed = !v.microphone_allowed;
-                if !v.microphone_allowed {
-                    v.pcm.stop();
-                }
+        if permission == v.microphone_id {
+            if !v.declaration.microphone || v.session.server_side {
+                return false;
             }
-        } else if let Some(e) = v.endpoints.get_mut(button - 1) {
+            v.microphone_allowed = !v.microphone_allowed;
+            v.microphone_id = permission_id();
+            if !v.microphone_allowed {
+                v.pcm.stop();
+            }
+        } else if let Some(e) = v.endpoints.iter_mut().find(|e| e.id == permission) {
             e.allowed = !e.allowed;
+            e.id = permission_id();
             if !e.allowed {
                 v.transport.reset();
                 v.resolving = None;
             }
         } else {
-            return;
+            return false;
         }
         v.event(Event::PermissionsChanged);
+        true
     }
     /// Focus-loss barrier: stop now, before another key event can start capture.
     pub fn stop_capture(&mut self) {
@@ -721,6 +753,10 @@ mod tests {
         );
         s
     }
+    fn toggle(s: &mut Services, id: &str, index: usize) {
+        let token = s.permissions(id)[index].id;
+        assert!(s.permission_click(id, token));
+    }
     #[test]
     fn denials_do_not_open_devices_or_resolve_and_grants_are_per_mod() {
         let mut s = services();
@@ -733,14 +769,14 @@ mod tests {
         v.request_endpoint("example.test", 24454).unwrap();
         v.request_endpoint("example.test", 24454).unwrap();
         assert_eq!(v.endpoints.len(), 1);
-        s.permission_click("one", 0);
+        toggle(&mut s, "one", 0);
         assert!(s.voice("one").unwrap().microphone_allowed);
         assert!(!s.voice("two").unwrap().microphone_allowed);
     }
     #[test]
     fn reconnect_to_the_same_server_revokes_session_consent() {
         let mut s = services();
-        s.permission_click("one", 0);
+        toggle(&mut s, "one", 0);
         let mut next = s.session.clone();
         next.connection += 1;
         s.sync(next, [0.0; 3], 0.0, 1.0);
@@ -760,7 +796,7 @@ mod tests {
             .unwrap()
             .request_endpoint("example.test", 24454)
             .unwrap();
-        s.permission_click("one", 1);
+        toggle(&mut s, "one", 1);
         let v = s.voice("one").unwrap();
         assert!(v.resolve("example.test", 24455).is_err());
         assert!(v.connect_udp("127.0.0.1:24454").is_err());
@@ -773,7 +809,7 @@ mod tests {
     #[test]
     fn disconnect_and_new_bundle_discard_grants_queues_and_pending_work() {
         let mut s = services();
-        s.permission_click("one", 0);
+        toggle(&mut s, "one", 0);
         let v = s.voice("one").unwrap();
         v.request_endpoint("127.0.0.1", 24454).unwrap();
         v.register_channel("test:voice").unwrap();
@@ -796,7 +832,7 @@ mod tests {
             0.0,
             1.0,
         );
-        s.permission_click("one", 0);
+        toggle(&mut s, "one", 0);
         let mut d = declaration("one");
         d.version = "2".into();
         s.register(d).unwrap();
@@ -865,12 +901,12 @@ mod tests {
         let mut s = services();
         let v = s.voice("one").unwrap();
         v.request_endpoint("example.test", 24454).unwrap();
-        s.permission_click("one", 1);
+        toggle(&mut s, "one", 1);
         s.voice("one").unwrap().resolving = Some(("example.test".into(), 24454, Instant::now()));
-        s.permission_click("one", 1);
+        toggle(&mut s, "one", 1);
         assert!(s.voice("one").unwrap().resolving.is_none());
         assert!(s.voice("one").unwrap().resolved().unwrap().is_none());
-        s.permission_click("one", 0);
+        toggle(&mut s, "one", 0);
         s.stop_capture();
         assert!(!s.voice("one").unwrap().session.focused);
         assert!(
@@ -879,5 +915,114 @@ mod tests {
                 .start_capture("".into(), 1.0)
                 .is_err()
         );
+    }
+    #[test]
+    fn frame_sync_cannot_replenish_tick_budgets() {
+        let mut s = services();
+        s.voice("one")
+            .unwrap()
+            .register_channel("test:voice")
+            .unwrap();
+        for _ in 0..32 {
+            s.voice("one")
+                .unwrap()
+                .send_payload(None, "test:voice", vec![])
+                .unwrap();
+        }
+        for _ in 0..4 {
+            s.voice("one").unwrap().random_bytes(1024).unwrap();
+        }
+        for _ in 0..300 {
+            s.sync(s.session.clone(), [0.0; 3], 0.0, 1.0);
+        }
+        assert!(
+            s.voice("one")
+                .unwrap()
+                .send_payload(None, "test:voice", vec![])
+                .is_err()
+        );
+        assert!(s.voice("one").unwrap().random_bytes(1).is_err());
+        s.new_tick();
+        s.voice("one")
+            .unwrap()
+            .send_payload(None, "test:voice", vec![])
+            .unwrap();
+        s.voice("one").unwrap().random_bytes(1).unwrap();
+        s.new_tick();
+        for _ in 0..2 {
+            s.voice("one")
+                .unwrap()
+                .send_payload(None, "test:voice", vec![0; 32767])
+                .unwrap();
+        }
+        assert!(
+            s.voice("one")
+                .unwrap()
+                .send_payload(None, "test:voice", vec![0; 3])
+                .is_err()
+        );
+        s.sync(s.session.clone(), [0.0; 3], 0.0, 1.0);
+        assert!(
+            s.voice("one")
+                .unwrap()
+                .send_payload(None, "test:voice", vec![0; 3])
+                .is_err()
+        );
+    }
+    #[test]
+    fn displayed_permission_ids_never_change_scope_or_survive_reconnection() {
+        let mut s = services();
+        let mic = s.permissions("one")[0].id;
+        s.voice("one")
+            .unwrap()
+            .request_endpoint("127.0.0.1", 24454)
+            .unwrap();
+        let udp = s.permissions("one")[1].id;
+        assert!(!s.permission_click("two", mic));
+        assert!(s.permission_click("one", mic));
+        assert!(s.voice("one").unwrap().microphone_allowed);
+        assert!(
+            !s.permission_click("one", mic),
+            "duplicate/stale event ignored"
+        );
+        assert!(!s.voice("one").unwrap().endpoints[0].allowed);
+        assert!(s.permission_click("one", udp));
+        assert!(s.voice("one").unwrap().endpoints[0].allowed);
+        let old = s.permissions("one")[0].id;
+        let mut next = s.session.clone();
+        next.connection += 1;
+        s.sync(next, [0.0; 3], 0.0, 1.0);
+        assert!(!s.permission_click("one", old));
+        s.voice("one")
+            .unwrap()
+            .request_endpoint("127.0.0.2", 24454)
+            .unwrap();
+        assert!(!s.permission_click("one", udp));
+        assert!(!s.voice("one").unwrap().microphone_allowed);
+        assert!(!s.voice("one").unwrap().endpoints[0].allowed);
+    }
+    #[test]
+    fn dns_at_the_endpoint_cap_returns_the_accepted_results() {
+        let mut s = services();
+        let v = s.voice("one").unwrap();
+        for port in 1..=14 {
+            v.request_endpoint("example.test", port).unwrap();
+        }
+        let accepted = v.accept_resolved(
+            vec!["127.0.0.1".into(), "127.0.0.2".into(), "127.0.0.3".into()],
+            24454,
+        );
+        assert_eq!(accepted, ["127.0.0.1", "127.0.0.2"]);
+        assert_eq!(v.endpoints.len(), 16);
+        assert!(v.endpoints.iter().all(|e| !e.allowed));
+    }
+    #[test]
+    fn shared_address_space_is_labelled_local_including_mapped_ipv4() {
+        for ip in ["100.64.0.0", "100.127.255.255", "::ffff:100.64.0.1"] {
+            assert!(local(ip.parse().unwrap()));
+        }
+        for ip in ["100.63.255.255", "100.128.0.0"] {
+            assert!(!local(ip.parse().unwrap()));
+        }
     }
 }

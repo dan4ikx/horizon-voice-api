@@ -40,7 +40,8 @@ fn approved_peer_echoes_and_revocation_closes_the_socket() {
             .connect_udp(&address.to_string())
             .is_err()
     );
-    services.permission_click("echo", 1);
+    let permission = services.permissions("echo")[1].id;
+    assert!(services.permission_click("echo", permission));
     let socket = services
         .voice("echo")
         .unwrap()
@@ -65,7 +66,8 @@ fn approved_peer_echoes_and_revocation_closes_the_socket() {
         assert!(std::time::Instant::now() < deadline);
         std::thread::sleep(Duration::from_millis(1));
     }
-    services.permission_click("echo", 1);
+    let permission = services.permissions("echo")[1].id;
+    assert!(services.permission_click("echo", permission));
     assert!(
         services
             .voice("echo")
